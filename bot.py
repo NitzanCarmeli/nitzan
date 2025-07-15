@@ -1,71 +1,88 @@
-from flask import Flask, request
-import requests
-import tweepy
 import os
+import requests
 from datetime import datetime, timezone
+from tweepy import Client
 
-# Environment Variables
+TWITTER_BEARER_TOKEN = os.environ['TWITTER_BEARER_TOKEN']
 TELEGRAM_TOKEN = os.environ['TELEGRAM_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
-TWITTER_BEARER_TOKEN = os.environ['TWITTER_BEARER_TOKEN']
 TWITTER_USERNAME = os.environ['TWITTER_USERNAME']
 
-# Constants
-START_DATE = datetime(2025, 7, 15, tzinfo=timezone.utc)
-LAST_TWEET_FILE = "last_tweet_id.txt"
+client = Client(bearer_token=TWITTER_BEARER_TOKEN)
 
-# Flask app for Render
-app = Flask(__name__)
-
-# Set up Twitter client
-client = tweepy.Client(bearer_token=TWITTER_BEARER_TOKEN)
-
-def get_latest_tweet(username):
-    user = client.get_user(username=username)
-    tweets = client.get_users_tweets(
-        id=user.data.id,
-        max_results=5,
-        tweet_fields=["created_at"]
-    )
-
-    if tweets.data:
-        for tweet in tweets.data:
-            if tweet.created_at > START_DATE:
-                return tweet
-    return None
+# Set your start date here (only fetch tweets AFTER this date)
+START_DATE = datetime(2025, 7, 1, tzinfo=timezone.utc)
 
 def send_to_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
-        "parse_mode": "HTML"
+        "parse_mode": "HTML",
+        "disable_web_page_preview": False
     }
     requests.post(url, json=payload)
 
-def get_last_sent_tweet_id():
-    try:
-        with open(LAST_TWEET_FILE, "r") as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        return None
+def send_photo_to_telegram(photo_url):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "photo": photo_url
+    }
+    requests.post(url, json=payload)
 
-def save_last_sent_tweet_id(tweet_id):
-    with open(LAST_TWEET_FILE, "w") as f:
-        f.write(str(tweet_id))
+def send_video_to_telegram(video_url):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendVideo"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "video": video_url
+    }
+    requests.post(url, json=payload)
 
-@app.route("/")
-def run_bot():
-    tweet = get_latest_tweet(TWITTER_USERNAME)
-    if tweet:
-        last_id = get_last_sent_tweet_id()
-        if str(tweet.id) != last_id:
-            send_to_telegram(tweet.text)
-            save_last_sent_tweet_id(tweet.id)
-            return "✅ Tweet sent"
-        else:
-            return "⏸ No new tweet"
-    return "ℹ️ No tweet after start date"
+def main():
+    # Get user ID from username
+    user = client.get_user(username=TWITTER_USERNAME)
+    if user.data is None:
+        print("User not found")
+        return
+    
+    # Fetch tweets with media expansions
+    tweets = client.get_users_tweets(
+        id=user.data.id,
+        max_results=5,
+        tweet_fields=["created_at", "attachments", "text"],
+        expansions=["attachments.media_keys"],
+        media_fields=["url", "type"]
+    )
+    
+    if tweets.data is None:
+        print("No tweets found")
+        return
+    
+    # Parse media info
+    media = {}
+    if tweets.includes and "media" in tweets.includes:
+        for m in tweets.includes["media"]:
+            media[m.media_key] = m
+    
+    for tweet in tweets.data:
+        if tweet.created_at > START_DATE:
+            # Build tweet URL
+            tweet_url = f"https://twitter.com/{TWITTER_USERNAME}/status/{tweet.id}"
+            
+            # Send text + link message to Telegram
+            message = f"{tweet.text}\n\n<a href='{tweet_url}'>View on Twitter</a>"
+            send_to_telegram(message)
+            
+            # Send media if any
+            if hasattr(tweet, 'attachments') and 'media_keys' in tweet.attachments:
+                for media_key in tweet.attachments['media_keys']:
+                    m = media.get(media_key)
+                    if m:
+                        if m.type == "photo":
+                            send_photo_to_telegram(m.url)
+                        elif m.type in ["video", "animated_gif"]:
+                            send_video_to_telegram(m.url)
 
 if __name__ == "__main__":
-    app.run()
+    main()
