@@ -65,24 +65,25 @@ def main():
         for m in tweets.includes["media"]:
             media[m.media_key] = m
     
-    for tweet in tweets.data:
-        if tweet.created_at > START_DATE:
-            # Build tweet URL
-            tweet_url = f"https://twitter.com/{TWITTER_USERNAME}/status/{tweet.id}"
-            
-            # Send text + link message to Telegram
-            message = f"{tweet.text}\n\n<a href='{tweet_url}'>View on Twitter</a>"
-            send_to_telegram(message)
-            
-            # Send media if any
-            if hasattr(tweet, 'attachments') and 'media_keys' in tweet.attachments:
-                for media_key in tweet.attachments['media_keys']:
-                    m = media.get(media_key)
-                    if m:
-                        if m.type == "photo":
-                            send_photo_to_telegram(m.url)
-                        elif m.type in ["video", "animated_gif"]:
-                            send_video_to_telegram(m.url)
+   for tweet in tweets.data:
+    if tweet.created_at > START_DATE:
+        tweet_url = f"https://twitter.com/{TWITTER_USERNAME}/status/{tweet.id}"
+
+        # שלח רק את הקישור לציוץ (בלי הטקסט)
+        message = f"<a href='{tweet_url}'>לצפייה בציוץ בטוויטר</a>"
+        send_to_telegram(message)
+
+        # מדיה? נשלח בנפרד
+        if hasattr(tweet, 'attachments') and 'media_keys' in tweet.attachments:
+            for media_key in tweet.attachments['media_keys']:
+                m = media.get(media_key)
+                if m:
+                    if m.type == "photo":
+                        send_photo_to_telegram(m.url)
+                    elif m.type in ["video", "animated_gif"]:
+                        # רק נשלח את הקישור ולא ננסה לשלוח את הווידאו
+                        send_to_telegram(f"<a href='{tweet_url}'>לצפייה בסרטון בטוויטר</a>")
+
 
 if __name__ == "__main__":
     main()
